@@ -28,23 +28,48 @@ els.timesheetFile.addEventListener("change", (e) => handleFile(e, "timesheet"));
 els.reconcileBtn.addEventListener("click", runReconciliation);
 
 async function handleFile(evt, kind) {
-  const file = evt.target.files[0];
-  if (!file) return;
+  const files = Array.from(evt.target.files || []);
+  if (!files.length) return;
+  const zone = kind === "attendance" ? els.attendanceZone : els.timesheetZone;
+  const info = kind === "attendance" ? els.attendanceInfo : els.timesheetInfo;
   try {
-    const wb = await readWorkbook(file);
-    const parsed = parseWorkbook(wb);
-    state[kind] = { file, parsed };
-    const zone = kind === "attendance" ? els.attendanceZone : els.timesheetZone;
-    const info = kind === "attendance" ? els.attendanceInfo : els.timesheetInfo;
+    const perFile = [];
+    for (const file of files) {
+      const wb = await readWorkbook(file);
+      const parsed = parseWorkbook(wb);
+      perFile.push({ name: file.name, parsed });
+    }
+    const merged = mergeParsed(perFile.map((p) => p.parsed));
+    state[kind] = { files, parsed: merged };
     zone.classList.add("has-file");
-    info.textContent = `${file.name} · ${parsed.rows.length} employee rows · ${parsed.dates.length} date columns`;
+    info.innerHTML =
+      `<b>${files.length} file${files.length > 1 ? "s" : ""}</b> · ` +
+      `${merged.rows.length} employees · ${merged.dates.length} dates` +
+      `<div style="margin-top:6px;color:#6b7383;font-size:11px;">` +
+      perFile.map((p) => `• ${p.name} (${p.parsed.rows.length} emp, ${p.parsed.dates.length} dates)`).join("<br>") +
+      `</div>`;
   } catch (err) {
     console.error(err);
-    const info = kind === "attendance" ? els.attendanceInfo : els.timesheetInfo;
     info.innerHTML = `<span class="err">Parse error: ${err.message}</span>`;
     state[kind] = null;
   }
   els.reconcileBtn.disabled = !(state.attendance && state.timesheet);
+}
+
+function mergeParsed(parsedList) {
+  const empMap = new Map();
+  const dateSet = new Set();
+  for (const p of parsedList) {
+    for (const { employee, marks } of p.rows) {
+      if (!empMap.has(employee)) empMap.set(employee, {});
+      Object.assign(empMap.get(employee), marks);
+    }
+    for (const d of p.dates) dateSet.add(d);
+  }
+  return {
+    rows: [...empMap.entries()].map(([employee, marks]) => ({ employee, marks })),
+    dates: [...dateSet].sort(),
+  };
 }
 
 function readWorkbook(file) {

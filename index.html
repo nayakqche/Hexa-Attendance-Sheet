@@ -17,15 +17,15 @@
     <section class="uploads">
       <div class="drop-zone" id="attendanceZone">
         <h2>Attendance Sheet</h2>
-        <p class="hint">One workbook. Rows = employees, columns = dates.</p>
-        <input type="file" id="attendanceFile" accept=".xlsx,.xls,.csv" />
+        <p class="hint">One or more workbooks. Rows = employees, columns = dates.</p>
+        <input type="file" id="attendanceFile" accept=".xlsx,.xls,.csv" multiple />
         <div class="file-info" id="attendanceInfo">No file selected</div>
       </div>
 
       <div class="drop-zone" id="timesheetZone">
         <h2>Timesheet (bulk, month-wise)</h2>
-        <p class="hint">One workbook. Each sheet can be a month, or a single sheet with a date column.</p>
-        <input type="file" id="timesheetFile" accept=".xlsx,.xls,.csv" />
+        <p class="hint">One or more workbooks. Each sheet can be a month, or a single sheet with a date column.</p>
+        <input type="file" id="timesheetFile" accept=".xlsx,.xls,.csv" multiple />
         <div class="file-info" id="timesheetInfo">No file selected</div>
       </div>
     </section>
