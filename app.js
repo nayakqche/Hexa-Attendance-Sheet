@@ -25,11 +25,23 @@ const els = {
   statDates: document.getElementById("statDates"),
   statMismatches: document.getElementById("statMismatches"),
   statOnlyIn: document.getElementById("statOnlyIn"),
+  genPanel: document.getElementById("genPanel"),
+  genList: document.getElementById("genList"),
+  genSearch: document.getElementById("genSearch"),
+  genSelectAll: document.getElementById("genSelectAll"),
+  genClear: document.getElementById("genClear"),
+  genProject: document.getElementById("genProject"),
+  genBtn: document.getElementById("genBtn"),
+  genStatus: document.getElementById("genStatus"),
 };
 
 els.attendanceFile.addEventListener("change", (e) => handleFile(e, "attendance"));
 els.timesheetFile.addEventListener("change", (e) => handleFile(e, "timesheet"));
 els.reconcileBtn.addEventListener("click", runReconciliation);
+els.genSearch.addEventListener("input", () => renderGenList());
+els.genSelectAll.addEventListener("click", () => toggleAllGen(true));
+els.genClear.addEventListener("click", () => toggleAllGen(false));
+els.genBtn.addEventListener("click", generateSelected);
 
 async function handleFile(evt, kind) {
   const files = Array.from(evt.target.files || []);
@@ -70,6 +82,7 @@ async function handleFile(evt, kind) {
     state[kind] = null;
   }
   renderFilesTable();
+  if (kind === "attendance" && state.attendance) populateGenerator();
   els.reconcileBtn.disabled = !(state.attendance && state.timesheet);
 }
 
@@ -120,14 +133,20 @@ function mergeParsed(parsedList) {
   const empMap = new Map();
   const dateSet = new Set();
   for (const p of parsedList) {
-    for (const { employee, marks } of p.rows) {
-      if (!empMap.has(employee)) empMap.set(employee, {});
-      Object.assign(empMap.get(employee), marks);
+    for (const { employee, name, marks, raw, title } of p.rows) {
+      if (!empMap.has(employee)) empMap.set(employee, { name: "", marks: {}, raw: {}, title: "" });
+      const e = empMap.get(employee);
+      Object.assign(e.marks, marks);
+      if (raw) Object.assign(e.raw, raw);
+      if (title && !e.title) e.title = title;
+      if (name && !e.name) e.name = name;
     }
     for (const d of p.dates) dateSet.add(d);
   }
   return {
-    rows: [...empMap.entries()].map(([employee, marks]) => ({ employee, marks })),
+    rows: [...empMap.entries()].map(([employee, e]) => ({
+      employee, name: e.name || employee, marks: e.marks, raw: e.raw, title: e.title,
+    })),
     dates: [...dateSet].sort(),
   };
 }
@@ -174,6 +193,7 @@ function parseWorkbook(wb, fileName = "") {
     if (headerRowIdx < 0) continue;
 
     const empColIdx = findEmployeeCol(headers);
+    const titleColIdx = findTitleCol(headers);
     const dateCols = findDateCols(headers);
     const longDateColIdx = findLongDateCol(headers);
     const longValueColIdx = findLongValueCol(headers);
@@ -187,13 +207,17 @@ function parseWorkbook(wb, fileName = "") {
         const emp = normEmp(row[empColIdx]);
         if (!emp) continue;
         const marks = {};
+        const raw = {};
         for (const dc of dateCols) {
           const val = row[dc.colIdx];
           const mark = classify(val);
           if (mark !== null) marks[dc.iso] = mark;
+          raw[dc.iso] = String(val == null ? "" : val).trim();
         }
+        const title = titleColIdx >= 0 ? String(row[titleColIdx] || "").trim() : "";
+        const name = String(row[empColIdx] || "").trim();
         if (Object.keys(marks).length) {
-          allRows.push({ employee: emp, marks });
+          allRows.push({ employee: emp, name, marks, raw, title });
           Object.keys(marks).forEach((d) => allDatesSet.add(d));
         }
       }
@@ -217,15 +241,29 @@ function parseWorkbook(wb, fileName = "") {
 
   // Merge duplicate employee rows across sheets (e.g. one sheet per month)
   const merged = new Map();
-  for (const { employee, marks } of allRows) {
-    if (!merged.has(employee)) merged.set(employee, {});
-    Object.assign(merged.get(employee), marks);
+  for (const { employee, name, marks, raw, title } of allRows) {
+    if (!merged.has(employee)) merged.set(employee, { name: "", marks: {}, raw: {}, title: "" });
+    const e = merged.get(employee);
+    Object.assign(e.marks, marks);
+    if (raw) Object.assign(e.raw, raw);
+    if (title && !e.title) e.title = title;
+    if (name && !e.name) e.name = name;
   }
 
   return {
-    rows: [...merged.entries()].map(([employee, marks]) => ({ employee, marks })),
+    rows: [...merged.entries()].map(([employee, e]) => ({
+      employee, name: e.name || employee, marks: e.marks, raw: e.raw, title: e.title,
+    })),
     dates: [...allDatesSet].sort(),
   };
+}
+
+function findTitleCol(headers) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = String(headers[i] || "").trim().toLowerCase();
+    if (/^(job\s*title|designation|title|role)$/.test(h)) return i;
+  }
+  return -1;
 }
 
 // Shape C: a single-employee monthly timesheet.
@@ -572,3 +610,185 @@ function downloadCSV(rows, name) {
   a.download = name;
   a.click();
 }
+
+/* ------------------------------------------------------------------ *
+ *  Timesheet generator: build a per-employee monthly timesheet .xlsx
+ *  that replicates the company template, with leaves from attendance.
+ * ------------------------------------------------------------------ */
+
+// Attendance codes that mean a week-off or a holiday (leaves are handled
+// separately via leaveCodeOf).
+const WEEKOFF_RE = /^(w\.?\s*o\.?|w\.?\s*off|wo|week\s*off|weekly\s*off|off)$/i;
+const HOLIDAY_RE = /^(h|hol|holiday|ph|public\s*holiday)$/i;
+
+function populateGenerator() {
+  const rows = state.attendance.parsed.rows;
+  if (!rows.length) { els.genPanel.classList.add("hidden"); return; }
+  els.genPanel.classList.remove("hidden");
+  renderGenList();
+}
+
+function renderGenList() {
+  const rows = state.attendance.parsed.rows.slice().sort((a, b) =>
+    (a.name || a.employee).localeCompare(b.name || b.employee));
+  const q = (els.genSearch.value || "").trim().toLowerCase();
+  // Preserve currently-checked employees across re-renders.
+  const checked = new Set(
+    [...els.genList.querySelectorAll("input:checked")].map((c) => c.value));
+  const shown = rows.filter((r) =>
+    !q || (r.name || r.employee).toLowerCase().includes(q));
+  els.genList.innerHTML = shown.map((r) => {
+    const key = r.employee;
+    const disp = r.name || r.employee;
+    const on = checked.has(key) ? "checked" : "";
+    return `<label class="gen-item"><input type="checkbox" value="${escapeAttr(key)}" ${on}/> ${escapeHtml(disp)}</label>`;
+  }).join("") || `<div class="gen-empty">No employees match.</div>`;
+  els.genList.querySelectorAll("input").forEach((c) =>
+    c.addEventListener("change", updateGenButton));
+  updateGenButton();
+}
+
+function toggleAllGen(on) {
+  els.genList.querySelectorAll("input").forEach((c) => { c.checked = on; });
+  updateGenButton();
+}
+
+function updateGenButton() {
+  const n = els.genList.querySelectorAll("input:checked").length;
+  els.genBtn.disabled = n === 0;
+  els.genBtn.textContent = n > 1 ? `Generate & Download (${n})` : "Generate & Download";
+}
+
+async function generateSelected() {
+  const keys = [...els.genList.querySelectorAll("input:checked")].map((c) => c.value);
+  if (!keys.length) return;
+  const byKey = new Map(state.attendance.parsed.rows.map((r) => [r.employee, r]));
+  const month = detectMonth(state.attendance.parsed.dates);
+  if (!month) { els.genStatus.textContent = "Couldn't detect the month from attendance dates."; return; }
+  const project = (els.genProject.value || "").trim();
+  els.genBtn.disabled = true;
+  let done = 0;
+  for (const key of keys) {
+    const emp = byKey.get(key);
+    if (!emp) continue;
+    els.genStatus.textContent = `Generating ${done + 1} / ${keys.length}…`;
+    try {
+      downloadTimesheet(emp, month.year, month.month0, project);
+      done++;
+      await sleep(350); // let each download start before the next
+    } catch (err) {
+      console.error(err);
+      els.genStatus.innerHTML = `<span class="err">Failed on ${escapeHtml(emp.name || key)}: ${err.message}</span>`;
+    }
+  }
+  els.genStatus.textContent = `Done — generated ${done} timesheet${done === 1 ? "" : "s"} for ${monthLong(month.year, month.month0)} ${month.year}.`;
+  updateGenButton();
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Pick the (year, month) that most of the attendance dates fall in.
+function detectMonth(dates) {
+  const counts = {};
+  for (const d of dates) counts[d.slice(0, 7)] = (counts[d.slice(0, 7)] || 0) + 1;
+  let ym = null, best = -1;
+  for (const [k, c] of Object.entries(counts)) if (c > best) { best = c; ym = k; }
+  if (!ym) return null;
+  const [y, m] = ym.split("-").map(Number);
+  return { year: y, month0: m - 1 };
+}
+
+function dayInfo(rawCode, date) {
+  const s = String(rawCode == null ? "" : rawCode).trim();
+  const leave = leaveCodeOf(s);
+  if (leave) return { kind: "leave", code: leave };
+  if (HOLIDAY_RE.test(s)) return { kind: "holiday" };
+  const dow = date.getDay();
+  if (dow === 0 || dow === 6 || WEEKOFF_RE.test(s)) return { kind: "weekoff" };
+  return { kind: "work" };
+}
+
+function rowCells(info) {
+  if (info.kind === "leave")   return { s: info.code, e: info.code, reg: "0:00", ot: "0:00", tot: "-", act: "-", hrs: 0 };
+  if (info.kind === "holiday") return { s: "Holiday", e: "Holiday", reg: "0:00", ot: "0:00", tot: "-", act: "-", hrs: 0 };
+  if (info.kind === "weekoff") return { s: "W. Off", e: "W. Off", reg: "0:00", ot: "0:00", tot: "-", act: "-", hrs: 0 };
+  return { s: "9:30 AM", e: "6:30 AM", reg: "09:00", ot: "0:00", tot: "9.00", act: "9.00", hrs: 9 };
+}
+
+const longDate = (d) => d.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+const weekdayName = (d) => d.toLocaleDateString("en-US", { weekday: "long" });
+const monthShortLabel = (y, m0) => new Date(y, m0, 1).toLocaleDateString("en-US", { month: "short" }) + "-" + String(y).slice(-2);
+const monthLong = (y, m0) => new Date(y, m0, 1).toLocaleDateString("en-US", { month: "long" });
+
+function buildTimesheetAOA(emp, year, m0, project) {
+  const projHeader = project ? "Project " + project : "Project";
+  const aoa = [
+    ["Employee Name:", emp.name || emp.employee],
+    ["Title:", emp.title || ""],
+    ["Month:", monthShortLabel(year, m0)],
+    [],
+    ["Date", "Day", "Start Time", "End Time", "Regular Hours", "Overtime Hours", "Total Hours", projHeader],
+    ["", "", "", "", "", "", "", "On an actual basis"],
+  ];
+  const days = new Date(year, m0 + 1, 0).getDate();
+  let sum = 0;
+  for (let d = 1; d <= days; d++) {
+    const date = new Date(year, m0, d);
+    const iso = `${year}-${pad(m0 + 1)}-${pad(d)}`;
+    const c = rowCells(dayInfo(emp.raw ? emp.raw[iso] : "", date));
+    sum += c.hrs;
+    aoa.push([longDate(date), weekdayName(date), c.s, c.e, c.reg, c.ot, c.tot, c.act]);
+  }
+  const tot = sum.toFixed(2);
+  aoa.push(["", "", "", "", "", "", tot, tot]);
+  return aoa;
+}
+
+function downloadTimesheet(emp, year, m0, project) {
+  const aoa = buildTimesheetAOA(emp, year, m0, project);
+  const XL = window.__XLSX_STYLE || XLSX; // styled writer if available
+  const ws = XL.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 15 }, { wch: 12 }, { wch: 16 }];
+
+  const lastRow = aoa.length - 1;
+  ws["!merges"] = [];
+  for (let c = 0; c <= 6; c++) ws["!merges"].push({ s: { r: 4, c }, e: { r: 5, c } });
+  ws["!merges"].push({ s: { r: lastRow, c: 0 }, e: { r: lastRow, c: 5 } });
+
+  applyTimesheetStyles(ws, aoa, XL);
+
+  const wb = XL.utils.book_new();
+  XL.utils.book_append_sheet(wb, ws, "Timesheet");
+  const fname = `${emp.name || emp.employee}_${monthLong(year, m0)} ${year}.xlsx`;
+  XL.writeFile(wb, fname);
+}
+
+// Borders, gray header, bold labels — ignored gracefully if the styled writer
+// isn't loaded (data + merges still come through).
+function applyTimesheetStyles(ws, aoa, XL) {
+  const thin = { style: "thin", color: { rgb: "000000" } };
+  const border = { top: thin, bottom: thin, left: thin, right: thin };
+  const setStyle = (r, c, style) => {
+    const ref = XL.utils.encode_cell({ r, c });
+    if (!ws[ref]) ws[ref] = { t: "s", v: "" };
+    ws[ref].s = Object.assign({}, ws[ref].s, style);
+  };
+  const lastRow = aoa.length - 1;
+  for (let r = 4; r <= lastRow; r++) {
+    for (let c = 0; c <= 7; c++) {
+      const header = r === 4 || r === 5;
+      setStyle(r, c, {
+        border,
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+        ...(header ? { font: { bold: true }, fill: { fgColor: { rgb: "D9D9D9" } } } : {}),
+      });
+    }
+  }
+  [0, 1, 2].forEach((r) => setStyle(r, 0, { font: { bold: true } }));
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (m) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+function escapeAttr(s) { return escapeHtml(s); }

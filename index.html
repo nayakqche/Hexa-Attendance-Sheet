@@ -6,6 +6,14 @@
   <title>Hexa Climate — Attendance vs Timesheet Reconciliation</title>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script>window.__XLSX_READ = window.XLSX;</script>
+  <!-- Styled writer (borders/fills/merges) for generated timesheets. Vendored locally. -->
+  <script src="vendor/xlsx-style.js"></script>
+  <script>
+    // Keep the proven 0.20.3 reader as XLSX; expose the styled fork separately.
+    window.__XLSX_STYLE = window.XLSX;
+    window.XLSX = window.__XLSX_READ || window.XLSX;
+  </script>
 </head>
 <body>
   <header>
@@ -39,6 +47,22 @@
         &nbsp;— anything else = <b>Present</b>
       </span>
     </div>
+
+    <section id="genPanel" class="gen-panel hidden">
+      <h3>Generate timesheets from Attendance</h3>
+      <p class="gen-hint">Pick employees and download a filled monthly timesheet (.xlsx) for each — same template, with leaves pulled from the attendance sheet.</p>
+      <div class="gen-controls">
+        <input type="text" id="genSearch" placeholder="Search employees…" />
+        <button id="genSelectAll" type="button">Select all</button>
+        <button id="genClear" type="button">Clear</button>
+        <label class="proj-label">Project name (optional): <input type="text" id="genProject" placeholder="e.g. Mandsaur" /></label>
+      </div>
+      <div id="genList" class="gen-list"></div>
+      <div class="gen-footer">
+        <button id="genBtn" disabled>Generate &amp; Download</button>
+        <span id="genStatus" class="gen-status"></span>
+      </div>
+    </section>
 
     <section id="filesPanel" class="files-panel hidden">
       <h3>Uploaded files</h3>

@@ -34,9 +34,18 @@ mismatches, and one `WFH` vs `P` cell that correctly does **not** flag.
 
 You'll see:
 - **Leave Mismatches** — same employee + date, but the two files disagree on the leave code (or one says Leave and the other says Present).
-- **Missing in One File** — an employee/date recorded in only one of the two files.
+- **Missing Dates** — for matched employees, a date recorded in only one of the two files.
+- **Timesheet employees not found in Attendance** — names that couldn't be matched.
 
-Both tables download as CSV.
+Only the employees whose timesheets you upload are reconciled (not everyone in the attendance sheet). Names are matched leniently (small spelling differences and first-name-only file names are tolerated).
+
+All tables download as CSV.
+
+## Generate timesheets from Attendance
+
+Upload the Attendance Sheet, then in **Generate timesheets from Attendance** pick one or more employees and click **Generate & Download**. For each selected employee you get a monthly timesheet `.xlsx` that replicates the company template (same layout, merged headers, borders), named like `Siddharth Sundriyal_December 2025.xlsx`.
+
+Day types are taken from the attendance sheet: leave codes → the leave, `H`/holiday → Holiday, `WO`/week-off and weekends → W. Off, everything else → a standard 9:30 AM–6:30 AM working day. The styled `.xlsx` writer is vendored at `vendor/xlsx-style.js`.
 
 ## Supported sheet layouts
 
