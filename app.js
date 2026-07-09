@@ -37,12 +37,13 @@ async function handleFile(evt, kind) {
   const zone = kind === "attendance" ? els.attendanceZone : els.timesheetZone;
   const info = kind === "attendance" ? els.attendanceInfo : els.timesheetInfo;
   try {
-    const perFile = [];
     for (const file of files) {
       const wb = await readWorkbook(file);
       const parsed = parseWorkbook(wb, file.name);
-      perFile.push({ name: file.name, parsed });
-      // Record full details for the uploaded-files table.
+      // Replace any earlier upload with the same name (avoid double counting).
+      const dup = uploadedFiles[kind].findIndex((f) => f.name === file.name);
+      if (dup >= 0) uploadedFiles[kind].splice(dup, 1);
+      // Accumulate across every upload for this side (don't discard earlier files).
       uploadedFiles[kind].push({
         name: file.name,
         size: file.size,
@@ -53,10 +54,12 @@ async function handleFile(evt, kind) {
         dateRange: parsed.dates.length
           ? `${parsed.dates[0]} → ${parsed.dates[parsed.dates.length - 1]}`
           : "—",
+        parsed,
       });
     }
-    const merged = mergeParsed(perFile.map((p) => p.parsed));
-    state[kind] = { files, parsed: merged };
+    // Rebuild state from ALL files uploaded for this side so far.
+    const merged = mergeParsed(uploadedFiles[kind].map((f) => f.parsed));
+    state[kind] = { parsed: merged };
     zone.classList.add("has-file");
     info.innerHTML =
       `<b>${uploadedFiles[kind].length} file${uploadedFiles[kind].length > 1 ? "s" : ""} loaded</b> · ` +
@@ -449,14 +452,18 @@ function runReconciliation() {
   }
 }
 
-// Find the attendance key for a timesheet employee: exact first, then a tolerant
-// match (ignoring punctuation/spacing, allowing a tiny spelling difference such
-// as "Aapoorv" vs "Apoorv").
+// Find the attendance key for a timesheet employee. Tries, in order:
+//   1. exact (normalized) match
+//   2. whole-string fuzzy match ("Aapoorv" vs "Apoorv")
+//   3. token-subset match ("Karunakaran" ⊆ "Karunakaran Thangaraj") — only when
+//      exactly one attendance name qualifies, to avoid grabbing the wrong person.
 function matchAttendance(emp, A) {
   if (A.has(emp)) return emp;
   const norm = (s) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase();
   const target = norm(emp);
   if (!target) return null;
+
+  // 2) whole-string fuzzy
   let best = null, bestDist = Infinity;
   for (const key of A.keys()) {
     const k = norm(key);
@@ -464,8 +471,22 @@ function matchAttendance(emp, A) {
     const d = levenshtein(target, k);
     if (d < bestDist) { bestDist = d; best = key; }
   }
-  const tolerance = Math.max(1, Math.floor(target.length * 0.12));
-  return best && bestDist <= tolerance ? best : null;
+  if (best && bestDist <= Math.max(1, Math.floor(target.length * 0.12))) return best;
+
+  // 3) token-subset (unique only)
+  const tokensOf = (s) => String(s).toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+  const tTokens = tokensOf(emp);
+  if (tTokens.length) {
+    const candidates = [];
+    for (const key of A.keys()) {
+      const aTokens = tokensOf(key);
+      const allIn = tTokens.every((tt) =>
+        aTokens.some((at) => at === tt || levenshtein(at, tt) <= 1));
+      if (allIn) candidates.push(key);
+    }
+    if (candidates.length === 1) return candidates[0];
+  }
+  return null;
 }
 
 function levenshtein(a, b) {
