@@ -60,6 +60,31 @@ button#reconcileBtn:disabled { background: #a9b3c9; cursor: not-allowed; }
   font-size: 11px;
 }
 
+.files-panel {
+  background: #fff;
+  border: 1px solid #e5e8ef;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.files-panel.hidden { display: none; }
+.files-panel h3 {
+  margin: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e8ef;
+  font-size: 15px;
+}
+.table-wrap { overflow-x: auto; }
+#filesTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+#filesTable th, #filesTable td {
+  text-align: left; padding: 10px 14px; border-bottom: 1px solid #eef0f5; white-space: nowrap;
+}
+#filesTable th {
+  background: #fafbfd; font-weight: 600; color: #4a5162;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .3px;
+}
+#filesTable tr:last-child td { border-bottom: none; }
+
 .summary {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

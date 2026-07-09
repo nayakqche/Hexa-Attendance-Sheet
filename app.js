@@ -6,6 +6,8 @@ const LEAVE_CODES = ["SL", "PL", "UL", "FL", "SPL", "ML", "PT", "BL", "CL"];
 const LEAVE_SET = new Set(LEAVE_CODES);
 
 const state = { attendance: null, timesheet: null };
+// Every uploaded file, with parse details, for the "Uploaded files" table.
+const uploadedFiles = { attendance: [], timesheet: [] };
 
 const els = {
   attendanceFile: document.getElementById("attendanceFile"),
@@ -17,6 +19,8 @@ const els = {
   reconcileBtn: document.getElementById("reconcileBtn"),
   summary: document.getElementById("summary"),
   results: document.getElementById("results"),
+  filesPanel: document.getElementById("filesPanel"),
+  filesTable: document.getElementById("filesTable"),
   statEmployees: document.getElementById("statEmployees"),
   statDates: document.getElementById("statDates"),
   statMismatches: document.getElementById("statMismatches"),
@@ -38,22 +42,75 @@ async function handleFile(evt, kind) {
       const wb = await readWorkbook(file);
       const parsed = parseWorkbook(wb);
       perFile.push({ name: file.name, parsed });
+      // Record full details for the uploaded-files table.
+      uploadedFiles[kind].push({
+        name: file.name,
+        size: file.size,
+        sheets: wb.SheetNames.length,
+        sheetNames: wb.SheetNames.join(", "),
+        employees: parsed.rows.length,
+        dates: parsed.dates.length,
+        dateRange: parsed.dates.length
+          ? `${parsed.dates[0]} → ${parsed.dates[parsed.dates.length - 1]}`
+          : "—",
+      });
     }
     const merged = mergeParsed(perFile.map((p) => p.parsed));
     state[kind] = { files, parsed: merged };
     zone.classList.add("has-file");
     info.innerHTML =
-      `<b>${files.length} file${files.length > 1 ? "s" : ""}</b> · ` +
-      `${merged.rows.length} employees · ${merged.dates.length} dates` +
-      `<div style="margin-top:6px;color:#6b7383;font-size:11px;">` +
-      perFile.map((p) => `• ${p.name} (${p.parsed.rows.length} emp, ${p.parsed.dates.length} dates)`).join("<br>") +
-      `</div>`;
+      `<b>${uploadedFiles[kind].length} file${uploadedFiles[kind].length > 1 ? "s" : ""} loaded</b> · ` +
+      `${merged.rows.length} employees · ${merged.dates.length} dates`;
   } catch (err) {
     console.error(err);
     info.innerHTML = `<span class="err">Parse error: ${err.message}</span>`;
     state[kind] = null;
   }
+  renderFilesTable();
   els.reconcileBtn.disabled = !(state.attendance && state.timesheet);
+}
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderFilesTable() {
+  const all = [
+    ...uploadedFiles.attendance.map((f) => ({ ...f, kind: "Attendance" })),
+    ...uploadedFiles.timesheet.map((f) => ({ ...f, kind: "Timesheet" })),
+  ];
+  if (!all.length) {
+    els.filesPanel.classList.add("hidden");
+    return;
+  }
+  els.filesPanel.classList.remove("hidden");
+  const head =
+    `<thead><tr>` +
+    ["#", "Type", "File name", "Size", "Sheets", "Employees", "Dates", "Date range", "Status"]
+      .map((h) => `<th>${h}</th>`).join("") +
+    `</tr></thead>`;
+  const body = all.map((f, i) => {
+    const ok = f.employees > 0 && f.dates > 0;
+    const status = ok
+      ? `<span class="tag present">Parsed</span>`
+      : `<span class="tag mismatch">No data — check layout</span>`;
+    return (
+      `<tr>` +
+      `<td>${i + 1}</td>` +
+      `<td><span class="tag ${f.kind === "Attendance" ? "leave" : "missing"}">${f.kind}</span></td>` +
+      `<td title="Sheets: ${f.sheetNames}">${f.name}</td>` +
+      `<td>${fmtSize(f.size)}</td>` +
+      `<td>${f.sheets}</td>` +
+      `<td>${f.employees}</td>` +
+      `<td>${f.dates}</td>` +
+      `<td>${f.dateRange}</td>` +
+      `<td>${status}</td>` +
+      `</tr>`
+    );
+  }).join("");
+  els.filesTable.innerHTML = head + `<tbody>${body}</tbody>`;
 }
 
 function mergeParsed(parsedList) {
