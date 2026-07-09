@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hexa Climate — Attendance vs Timesheet Reconciliation</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Hexa Climate — Leave Reconciliation</h1>
+    <p class="sub">Upload the Attendance Sheet and Timesheet. We flag any employee/date where the leave marking doesn't match.</p>
+  </header>
+
+  <main>
+    <section class="uploads">
+      <div class="drop-zone" id="attendanceZone">
+        <h2>Attendance Sheet</h2>
+        <p class="hint">One workbook. Rows = employees, columns = dates.</p>
+        <input type="file" id="attendanceFile" accept=".xlsx,.xls,.csv" />
+        <div class="file-info" id="attendanceInfo">No file selected</div>
+      </div>
+
+      <div class="drop-zone" id="timesheetZone">
+        <h2>Timesheet (bulk, month-wise)</h2>
+        <p class="hint">One workbook. Each sheet can be a month, or a single sheet with a date column.</p>
+        <input type="file" id="timesheetFile" accept=".xlsx,.xls,.csv" />
+        <div class="file-info" id="timesheetInfo">No file selected</div>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button id="reconcileBtn" disabled>Reconcile & Flag Mismatches</button>
+      <span class="legend">
+        Leave codes:
+        <code>SL</code> <code>PL</code> <code>UL</code> <code>FL</code>
+        <code>SPL</code> <code>ML</code> <code>PT</code> <code>BL</code> <code>CL</code>
+        &nbsp;— anything else = <b>Present</b>
+      </span>
+    </div>
+
+    <section id="summary" class="summary hidden">
+      <div class="stat"><span class="num" id="statEmployees">0</span><span class="lbl">Employees</span></div>
+      <div class="stat"><span class="num" id="statDates">0</span><span class="lbl">Dates compared</span></div>
+      <div class="stat mismatch"><span class="num" id="statMismatches">0</span><span class="lbl">Mismatches</span></div>
+      <div class="stat"><span class="num" id="statOnlyIn">0</span><span class="lbl">Missing in one file</span></div>
+    </section>
+
+    <section id="results" class="results"></section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
