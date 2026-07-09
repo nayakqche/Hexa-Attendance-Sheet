@@ -465,7 +465,11 @@ function runReconciliation() {
       } else if (t == null && a != null) {
         missing.push({ employee: emp, date: d, attendance: label(a), timesheet: "—", reason: "Missing in Timesheet" });
       } else if (a != null && t != null && a !== t) {
-        mismatches.push({ employee: emp, date: d, attendance: label(a), timesheet: label(t) });
+        mismatches.push({
+          employee: emp, date: d,
+          attendance: label(a), timesheet: label(t),
+          note: mismatchNote(a, t),
+        });
       }
     }
   }
@@ -476,8 +480,8 @@ function runReconciliation() {
   els.statMismatches.textContent = mismatches.length;
   els.statOnlyIn.textContent = missing.length;
 
-  renderTable("Leave Mismatches", ["Employee", "Date", "Attendance Sheet", "Timesheet"],
-    mismatches.map((m) => [m.employee, m.date, tag(m.attendance), tag(m.timesheet)]),
+  renderTable("Leave Mismatches", ["Employee", "Date", "Attendance Sheet", "Timesheet", "Where it's missing"],
+    mismatches.map((m) => [m.employee, m.date, tag(m.attendance), tag(m.timesheet), m.note]),
     mismatches, "mismatches.csv");
 
   renderTable("Missing Dates (matched employees only)", ["Employee", "Date", "Attendance Sheet", "Timesheet", "Note"],
@@ -551,6 +555,17 @@ function indexParsed(parsed) {
 function label(code) {
   if (code === "P") return "Present";
   return code;
+}
+
+// Explain a mismatch: which file is missing the leave, or that the codes differ.
+// a = attendance mark, t = timesheet mark ("P" = present, else a leave code).
+function mismatchNote(a, t) {
+  const aLeave = a !== "P";
+  const tLeave = t !== "P";
+  if (tLeave && !aLeave) return `${t} not marked in Attendance Sheet`;
+  if (aLeave && !tLeave) return `${a} not marked in Timesheet`;
+  // Both are leaves but different codes.
+  return `Different leave codes (Attendance ${a} vs Timesheet ${t})`;
 }
 
 function tag(text) {
