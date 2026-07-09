@@ -398,36 +398,40 @@ function runReconciliation() {
   const A = indexParsed(state.attendance.parsed);
   const T = indexParsed(state.timesheet.parsed);
 
-  const allEmployees = new Set([...A.keys(), ...T.keys()]);
+  // Only reconcile the employees whose timesheets were uploaded — not everyone
+  // in the attendance sheet.
   const mismatches = [];
   const missing = [];
-  const dateUnion = new Set();
-  let comparedCells = 0;
+  const unmatched = [];
+  const dateSet = new Set();
+  const comparedEmployees = new Set();
 
-  for (const emp of allEmployees) {
-    const aMarks = A.get(emp) || {};
-    const tMarks = T.get(emp) || {};
+  for (const [emp, tMarks] of T) {
+    const matchKey = matchAttendance(emp, A);
+    if (!matchKey) {
+      unmatched.push({ employee: emp });
+      continue;
+    }
+    comparedEmployees.add(emp);
+    const aMarks = A.get(matchKey);
     const dates = new Set([...Object.keys(aMarks), ...Object.keys(tMarks)]);
     for (const d of dates) {
-      dateUnion.add(d);
+      dateSet.add(d);
       const a = aMarks[d];
       const t = tMarks[d];
       if (a == null && t != null) {
         missing.push({ employee: emp, date: d, attendance: "—", timesheet: label(t), reason: "Missing in Attendance" });
       } else if (t == null && a != null) {
         missing.push({ employee: emp, date: d, attendance: label(a), timesheet: "—", reason: "Missing in Timesheet" });
-      } else if (a != null && t != null) {
-        comparedCells++;
-        if (a !== t) {
-          mismatches.push({ employee: emp, date: d, attendance: label(a), timesheet: label(t) });
-        }
+      } else if (a != null && t != null && a !== t) {
+        mismatches.push({ employee: emp, date: d, attendance: label(a), timesheet: label(t) });
       }
     }
   }
 
   els.summary.classList.remove("hidden");
-  els.statEmployees.textContent = allEmployees.size;
-  els.statDates.textContent = dateUnion.size;
+  els.statEmployees.textContent = comparedEmployees.size;
+  els.statDates.textContent = dateSet.size;
   els.statMismatches.textContent = mismatches.length;
   els.statOnlyIn.textContent = missing.length;
 
@@ -435,9 +439,48 @@ function runReconciliation() {
     mismatches.map((m) => [m.employee, m.date, tag(m.attendance), tag(m.timesheet)]),
     mismatches, "mismatches.csv");
 
-  renderTable("Missing in One File", ["Employee", "Date", "Attendance Sheet", "Timesheet", "Note"],
+  renderTable("Missing Dates (matched employees only)", ["Employee", "Date", "Attendance Sheet", "Timesheet", "Note"],
     missing.map((m) => [m.employee, m.date, tag(m.attendance), tag(m.timesheet), m.reason]),
     missing, "missing.csv");
+
+  if (unmatched.length) {
+    renderTable("Timesheet employees not found in Attendance", ["Employee"],
+      unmatched.map((m) => [m.employee]), unmatched, "unmatched.csv");
+  }
+}
+
+// Find the attendance key for a timesheet employee: exact first, then a tolerant
+// match (ignoring punctuation/spacing, allowing a tiny spelling difference such
+// as "Aapoorv" vs "Apoorv").
+function matchAttendance(emp, A) {
+  if (A.has(emp)) return emp;
+  const norm = (s) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+  const target = norm(emp);
+  if (!target) return null;
+  let best = null, bestDist = Infinity;
+  for (const key of A.keys()) {
+    const k = norm(key);
+    if (k === target) return key;
+    const d = levenshtein(target, k);
+    if (d < bestDist) { bestDist = d; best = key; }
+  }
+  const tolerance = Math.max(1, Math.floor(target.length * 0.12));
+  return best && bestDist <= tolerance ? best : null;
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[m][n];
 }
 
 function indexParsed(parsed) {
