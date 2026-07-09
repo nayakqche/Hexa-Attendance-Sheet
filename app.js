@@ -40,7 +40,7 @@ async function handleFile(evt, kind) {
     const perFile = [];
     for (const file of files) {
       const wb = await readWorkbook(file);
-      const parsed = parseWorkbook(wb);
+      const parsed = parseWorkbook(wb, file.name);
       perFile.push({ name: file.name, parsed });
       // Record full details for the uploaded-files table.
       uploadedFiles[kind].push({
@@ -145,10 +145,12 @@ function readWorkbook(file) {
 }
 
 // Extracts { rows: [{employee, marks: { 'YYYY-MM-DD': 'SL'|'P'|... }}], dates: [...] }
-// Handles two common shapes:
+// Handles three common shapes:
 //   (A) Wide: employee-per-row, dates across columns
 //   (B) Long: one row per employee-date with an explicit Date column
-function parseWorkbook(wb) {
+//   (C) Vertical single-employee timesheet: name in a header cell, dates down
+//       column A, leave code in the Start/End Time columns
+function parseWorkbook(wb, fileName = "") {
   const allRows = [];
   const allDatesSet = new Set();
 
@@ -156,6 +158,14 @@ function parseWorkbook(wb) {
     const sheet = wb.Sheets[sheetName];
     const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
     if (!aoa.length) continue;
+
+    // Shape C — try the vertical single-employee timesheet first.
+    const vertical = parseVerticalTimesheet(aoa, fileName);
+    if (vertical && Object.keys(vertical.marks).length) {
+      allRows.push({ employee: vertical.employee, marks: vertical.marks });
+      Object.keys(vertical.marks).forEach((d) => allDatesSet.add(d));
+      continue;
+    }
 
     const { headerRowIdx, headers } = findHeaderRow(aoa);
     if (headerRowIdx < 0) continue;
@@ -213,6 +223,81 @@ function parseWorkbook(wb) {
     rows: [...merged.entries()].map(([employee, marks]) => ({ employee, marks })),
     dates: [...allDatesSet].sort(),
   };
+}
+
+// Shape C: a single-employee monthly timesheet.
+//   - Employee name lives in a cell next to an "Employee Name" label (or, failing
+//     that, is derived from the file name).
+//   - A header row contains "Date" plus "Day"/"Start Time"/"Total Hours".
+//   - Dates run down the Date column; the leave code (e.g. SL) appears in one of
+//     the time/hours cells on that row. Anything that isn't a leave code = Present.
+function parseVerticalTimesheet(aoa, fileName) {
+  const scan = Math.min(aoa.length, 12);
+
+  // 1) Employee name from an "Employee Name" label cell.
+  let employee = "";
+  for (let r = 0; r < scan && !employee; r++) {
+    const row = aoa[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      if (/employee\s*name/i.test(String(row[c] || ""))) {
+        for (let k = c + 1; k < row.length; k++) {
+          const v = String(row[k] || "").trim();
+          if (v) { employee = v; break; }
+        }
+      }
+      if (employee) break;
+    }
+  }
+  if (!employee) employee = empNameFromFile(fileName);
+  if (!employee) return null;
+
+  // 2) Header row with a "Date" column.
+  let headerRowIdx = -1, dateColIdx = -1, dayColIdx = -1;
+  for (let r = 0; r < Math.min(aoa.length, 15); r++) {
+    const row = (aoa[r] || []).map((c) => String(c || "").trim().toLowerCase());
+    const dc = row.findIndex((c) => c === "date");
+    const looksLikeTimesheet = row.some((c) => /day|start time|end time|total hours/.test(c));
+    if (dc >= 0 && looksLikeTimesheet) {
+      headerRowIdx = r;
+      dateColIdx = dc;
+      dayColIdx = row.findIndex((c) => c === "day");
+      break;
+    }
+  }
+  if (headerRowIdx < 0 || dateColIdx < 0) return null;
+
+  // 3) Walk the date rows; a leave code in any non-date/day cell wins.
+  const marks = {};
+  for (let r = headerRowIdx + 1; r < aoa.length; r++) {
+    const row = aoa[r] || [];
+    const iso = toISODate(row[dateColIdx]);
+    if (!iso) continue;
+    let leave = null;
+    for (let c = 0; c < row.length; c++) {
+      if (c === dateColIdx || c === dayColIdx) continue;
+      const code = leaveCodeOf(row[c]);
+      if (code) { leave = code; break; }
+    }
+    marks[iso] = leave || "P";
+  }
+  return { employee: normEmp(employee), marks };
+}
+
+// Returns a leave code if the cell holds one, otherwise null (never "P").
+function leaveCodeOf(v) {
+  const m = classify(v);
+  return LEAVE_SET.has(m) ? m : null;
+}
+
+// Best-effort employee name from a file name like "Apoorv Sohoni April 2025 (1).xlsx".
+function empNameFromFile(fileName) {
+  if (!fileName) return "";
+  let s = fileName.replace(/\.[^.]+$/, "");           // drop extension
+  s = s.replace(/\(\d+\)/g, " ");                       // drop "(1)"
+  s = s.replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/gi, " ");
+  s = s.replace(/\b(19|20)\d{2}\b/g, " ");              // drop years
+  s = s.replace(/\b(time\s*sheet|timesheet|attendance)\b/gi, " ");
+  return s.replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 // Scan first ~15 rows for the one that contains an employee-like header.
