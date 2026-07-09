@@ -28,6 +28,10 @@ Open `index.html` in a browser (or serve the folder with any static server, e.g.
 2. Drop the Timesheet workbook into the right panel.
 3. Click **Reconcile & Flag Mismatches**.
 
+To try it immediately, use the files in `samples/` (`attendance_sheet_sample.csv`
+and `timesheet_sample.csv`). They are intentionally seeded with 3 leave
+mismatches, and one `WFH` vs `P` cell that correctly does **not** flag.
+
 You'll see:
 - **Leave Mismatches** — same employee + date, but the two files disagree on the leave code (or one says Leave and the other says Present).
 - **Missing in One File** — an employee/date recorded in only one of the two files.
